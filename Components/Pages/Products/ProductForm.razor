@@ -1,0 +1,60 @@
+@rendermode InteractiveServer
+@using WarehouseX.DTOs
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.AspNetCore.Components
+@inject WarehouseX.Services.IProductService ProductService
+
+<EditForm Model="product" OnValidSubmit="HandleValidSubmit">
+    <DataAnnotationsValidator />
+    <ValidationSummary />
+    <div class="mb-2">
+        <label>Name</label>
+        <InputText class="form-control" @bind-Value="product.Name" />
+    </div>
+    <div class="mb-2">
+        <label>Description</label>
+        <InputText class="form-control" @bind-Value="product.Description" />
+    </div>
+    <div class="mb-2">
+        <label>SKU</label>
+        <InputText class="form-control" @bind-Value="product.SKU" />
+    </div>
+    <div class="mb-2">
+        <label>Stock</label>
+        <InputNumber class="form-control" @bind-Value="product.QuantityInStock" />
+    </div>
+    <button class="btn btn-success me-2" type="submit">Save</button>
+    <button class="btn btn-secondary" type="button" @onclick="GoBack">Cancel</button>
+</EditForm>
+
+@code {
+    [Parameter] public int? Id { get; set; }
+    [Parameter] public EventCallback OnSaved { get; set; }
+    private ProductDTO product = new();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Id != null)
+        {
+            var p = await ProductService.GetByIdAsync(Id.Value);
+            if (p != null)
+                product = p;
+        }
+        else
+        {
+            product = new ProductDTO();
+        }
+    }
+
+    private async Task HandleValidSubmit()
+    {
+        if (Id == null)
+            await ProductService.AddAsync(product);
+        else
+            await ProductService.UpdateAsync(product);
+        await OnSaved.InvokeAsync();
+    }
+
+    [Inject] NavigationManager Navigation { get; set; } = default!;
+    private void GoBack() => Navigation.NavigateTo("/products");
+}

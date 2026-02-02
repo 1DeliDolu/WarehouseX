@@ -1,0 +1,110 @@
+@page "/exportorders/edit/{id:int?}"
+@using WarehouseX.DTOs
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.AspNetCore.Components
+@inject WarehouseX.Services.IExportOrderService ExportOrderService
+@inject WarehouseX.Services.IProductService ProductService
+@inject NavigationManager Navigation
+
+@rendermode InteractiveServer
+
+<PageTitle>Edit Export Order</PageTitle>
+
+<EditForm Model="order" OnValidSubmit="HandleValidSubmit">
+    <DataAnnotationsValidator />
+    <ValidationSummary />
+    <div class="mb-2">
+        <label>Date</label>
+        <InputDate class="form-control" @bind-Value="order.ExportDate" />
+    </div>
+    <div class="mb-2">
+        <label>Customer</label>
+        <InputText class="form-control" @bind-Value="order.CustomerName" />
+    </div>
+    <div class="mb-2">
+        <label>Description</label>
+        <InputText class="form-control" @bind-Value="order.Description" />
+    </div>
+    <div class="mb-2">
+        <label>Items</label>
+        <button class="btn btn-sm btn-success mb-1" @onclick="AddItem" type="button">Add Item</button>
+        <table class="table table-bordered">
+            <thead>
+                <tr>
+                    <th>Product</th>
+                    <th>Quantity</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var item in order.Items)
+                {
+                    <tr>
+                        <td>
+                            <select class="form-select" @bind="item.ProductId">
+                                <option value="">Select...</option>
+                                @foreach (var p in products)
+                                {
+                                    <option value="@p.ProductId">@p.Name</option>
+                                }
+                            </select>
+                        </td>
+                        <td>
+                            <InputNumber class="form-control" @bind-Value="item.Quantity" />
+                        </td>
+                        <td>
+                            <button class="btn btn-sm btn-danger" @onclick="() => RemoveItem(item)" type="button">Remove</button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    <button class="btn btn-success me-2" type="submit">Save</button>
+    <button class="btn btn-secondary" type="button" @onclick="GoBack">Cancel</button>
+</EditForm>
+
+@code {
+    [Parameter] public int? id { get; set; }
+    private ExportOrderDTO order = new();
+    private List<ProductDTO> products = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        products = (await ProductService.GetAllAsync()).ToList();
+        if (id == null)
+        {
+            order = new ExportOrderDTO { ExportDate = DateTime.Today };
+        }
+        else
+        {
+            var o = await ExportOrderService.GetByIdAsync(id.Value);
+            if (o != null)
+                order = o;
+        }
+    }
+
+    private void AddItem()
+    {
+        order.Items.Add(new ExportOrderItemDTO());
+    }
+
+    private void RemoveItem(ExportOrderItemDTO item)
+    {
+        order.Items.Remove(item);
+    }
+
+    private async Task HandleValidSubmit()
+    {
+        if (id == null)
+            await ExportOrderService.AddAsync(order);
+        else
+            await ExportOrderService.UpdateAsync(order);
+        GoBack();
+    }
+
+    private void GoBack()
+    {
+        Navigation.NavigateTo("/export-orders");
+    }
+}

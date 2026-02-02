@@ -1,0 +1,115 @@
+@rendermode InteractiveServer
+@using WarehouseX.DTOs
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.AspNetCore.Components
+@inject WarehouseX.Services.IExportOrderService ExportOrderService
+@inject WarehouseX.Services.IProductService ProductService
+
+<EditForm Model="order" OnValidSubmit="HandleValidSubmit">
+    <DataAnnotationsValidator />
+    <ValidationSummary />
+    <div class="mb-2">
+        <label>Date</label>
+        <InputDate class="form-control" @bind-Value="order.ExportDate" />
+    </div>
+    <div class="mb-2">
+        <label>Customer</label>
+        <InputText class="form-control" @bind-Value="order.CustomerName" />
+    </div>
+    <div class="mb-2">
+        <label>Description</label>
+        <InputText class="form-control" @bind-Value="order.Description" />
+    </div>
+    <div class="mb-2">
+        <label>Items</label>
+        <button class="btn btn-sm btn-success mb-1" @onclick="AddItem">Add Item</button>
+        <table class="table table-bordered">
+            <thead>
+                <tr>
+                    <th>Product</th>
+                    <th>Quantity</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var item in order.Items)
+                {
+                    <tr>
+                        <td>
+                            <select class="form-select" @bind="item.ProductId">
+                                <option value="">Select...</option>
+                                @foreach (var p in products)
+                                {
+                                    <option value="@p.ProductId">@p.Name</option>
+                                }
+                            </select>
+                        </td>
+                        <td>
+                            <InputNumber class="form-control" @bind-Value="item.Quantity" />
+                        </td>
+                        <td>
+                            <button class="btn btn-sm btn-danger" @onclick="() => RemoveItem(item)">Remove</button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    <button class="btn btn-success me-2" type="submit">Save</button>
+    <button class="btn btn-secondary" type="button" @onclick="Hide">Cancel</button>
+</EditForm>
+
+@code {
+    [Parameter] public EventCallback OnSaved { get; set; }
+    private ExportOrderDTO order = new();
+    private int? editingId;
+    private List<ProductDTO> products = new();
+
+    public async void Show(int? id)
+    {
+        editingId = id;
+        products = (await ProductService.GetAllAsync()).ToList();
+        if (id == null)
+        {
+            order = new ExportOrderDTO { ExportDate = DateTime.Today };
+        }
+        else
+        {
+            await LoadOrder(id.Value);
+        }
+        StateHasChanged();
+    }
+
+    private async Task LoadOrder(int id)
+    {
+        var o = await ExportOrderService.GetByIdAsync(id);
+        if (o != null)
+            order = o;
+        StateHasChanged();
+    }
+
+    private void AddItem()
+    {
+        order.Items.Add(new ExportOrderItemDTO());
+    }
+
+    private void RemoveItem(ExportOrderItemDTO item)
+    {
+        order.Items.Remove(item);
+    }
+
+    private async Task HandleValidSubmit()
+    {
+        if (editingId == null)
+            await ExportOrderService.AddAsync(order);
+        else
+            await ExportOrderService.UpdateAsync(order);
+        await OnSaved.InvokeAsync();
+        Hide();
+    }
+
+    private void Hide()
+    {
+        StateHasChanged();
+    }
+}

@@ -1,0 +1,87 @@
+@rendermode InteractiveServer
+@page "/products/history/{Id:int}"
+@using WarehouseX.DTOs
+@inject WarehouseX.Services.IProductService ProductService
+@inject WarehouseX.Services.ProductHistoryService ProductHistoryService
+@inject NavigationManager Navigation
+
+<h3>Product Import-Export History</h3>
+
+@if (product == null)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <div class="mb-3">
+        <h4>@product.Name</h4>
+        <p><b>SKU:</b> @product.SKU</p>
+        <p><b>Description:</b> @product.Description</p>
+        <p><b>Remaining Stock:</b> @product.QuantityInStock</p>
+    </div>
+    <h5>Import History</h5>
+    <table class="table table-bordered">
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Supplier</th>
+                <th>Quantity</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var imp in importHistory)
+            {
+                <tr>
+                    <td>@imp.ImportDate.ToShortDateString()</td>
+                    <td>@imp.SupplierName</td>
+                    <td>@imp.Quantity</td>
+                    <td>@imp.Description</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    <h5>Export History</h5>
+    <table class="table table-bordered">
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Customer</th>
+                <th>Quantity</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var exp in exportHistory)
+            {
+                <tr>
+                    <td>@exp.ExportDate.ToShortDateString()</td>
+                    <td>@exp.CustomerName</td>
+                    <td>@exp.Quantity</td>
+                    <td>@exp.Description</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    <button class="btn btn-secondary" @onclick="GoBack">Back</button>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+    private ProductDTO? product;
+    private List<ImportHistoryRow> importHistory = new();
+    private List<ExportHistoryRow> exportHistory = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        product = await ProductService.GetByIdAsync(Id);
+        var (imports, exports) = await ProductHistoryService.GetProductHistoryAsync(Id);
+        importHistory = imports;
+        exportHistory = exports;
+    }
+
+    private void GoBack()
+    {
+        Navigation.NavigateTo("/products");
+    }
+}

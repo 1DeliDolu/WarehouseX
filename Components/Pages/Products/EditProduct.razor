@@ -1,0 +1,19 @@
+@rendermode InteractiveServer
+@page "/products/edit"
+@page "/products/edit/{Id:int?}"
+@using WarehouseX.DTOs
+@using WarehouseX.Components.Pages.Products
+@inject WarehouseX.Services.IProductService ProductService
+@inject NavigationManager Navigation
+
+<h3>@(Id == null ? "Add Product" : "Edit Product")</h3>
+<ProductForm Id="@Id" OnSaved="OnSaved" />
+
+@code {
+    [Parameter] public int? Id { get; set; }
+
+    private void OnSaved()
+    {
+        Navigation.NavigateTo("/products");
+    }
+}

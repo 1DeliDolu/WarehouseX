@@ -1,0 +1,77 @@
+@page "/export-orders"
+@using WarehouseX.DTOs
+@inject WarehouseX.Services.IExportOrderService ExportOrderService
+@inject NavigationManager Navigation
+@inject Microsoft.JSInterop.IJSRuntime JS
+@rendermode InteractiveServer
+
+<h3>Export Orders</h3>
+
+@if (orders == null)
+{
+    <p><em>Loading...</em></p>
+}
+else
+{
+    <button class="btn btn-primary mb-2" @onclick="ShowAddForm">Add Export Order</button>
+    <table class="table table-striped">
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Customer</th>
+                <th>Description</th>
+                <th>Items</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var o in orders)
+            {
+                <tr>
+                    <td>@o.ExportDate.ToShortDateString()</td>
+                    <td>@o.CustomerName</td>
+                    <td>@o.Description</td>
+                    <td>@o.Items.Count</td>
+                    <td>
+                        <button class="btn btn-sm btn-secondary me-1" @onclick="() => EditOrder(o.ExportOrderId)">Edit</button>
+                        <button class="btn btn-sm btn-danger" @onclick="() => DeleteOrder(o.ExportOrderId)">Delete</button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private List<ExportOrderDTO>? orders;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadOrders();
+    }
+
+    private async Task ReloadOrders()
+    {
+        orders = (await ExportOrderService.GetAllAsync()).ToList();
+        StateHasChanged();
+    }
+
+    private void ShowAddForm()
+    {
+        Navigation.NavigateTo("/exportorders/edit");
+    }
+
+    private void EditOrder(int id)
+    {
+        Navigation.NavigateTo($"/exportorders/edit/{id}");
+    }
+
+    private async Task DeleteOrder(int id)
+    {
+        if (await JS.InvokeAsync<bool>("confirm", $"Delete export order #{id}?") )
+        {
+            await ExportOrderService.DeleteAsync(id);
+            await ReloadOrders();
+        }
+    }
+}
