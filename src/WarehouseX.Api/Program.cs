@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
 using Pomelo.EntityFrameworkCore.MySql.Infrastructure;
+using WarehouseX.Api.Diagnostics;
 using WarehouseX.Api.Endpoints;
 using WarehouseX.Infrastructure.Persistence;
 
@@ -28,15 +29,31 @@ var serverVersion = string.IsNullOrWhiteSpace(serverVersionText)
     ? new MySqlServerVersion(new Version(8, 0, 36))
     : ServerVersion.Parse(serverVersionText);
 
-builder.Services.AddDbContext<WarehouseXDbContext>(options =>
+builder.Services.Configure<SlowQueryOptions>(builder.Configuration.GetSection("Diagnostics:SlowQuery"));
+builder.Services.AddSingleton<SlowQueryInterceptor>();
+
+var slowQueryEnabled = builder.Configuration.GetValue<bool?>("Diagnostics:SlowQuery:Enabled") ?? false;
+var commandTimeoutSeconds = builder.Configuration.GetValue<int?>("Diagnostics:CommandTimeoutSeconds");
+
+builder.Services.AddDbContext<WarehouseXDbContext>((sp, options) =>
 {
-    options.UseMySql(connectionString, serverVersion);
+    options.UseMySql(connectionString, serverVersion, mySqlOptions =>
+    {
+        if (commandTimeoutSeconds.HasValue)
+        {
+            mySqlOptions.CommandTimeout(commandTimeoutSeconds.Value);
+        }
+    });
+
+    if (slowQueryEnabled)
+    {
+        options.AddInterceptors(sp.GetRequiredService<SlowQueryInterceptor>());
+    }
 
     if (builder.Environment.IsDevelopment())
     {
         options.EnableDetailedErrors();
         options.EnableSensitiveDataLogging();
-        options.LogTo(Console.WriteLine, LogLevel.Information);
     }
 });
 
@@ -143,9 +160,7 @@ app.MapGet("/db/ping", async (WarehouseXDbContext db) =>
     }
 });
 
-var enableSampleIdsEndpoint = builder.Configuration.GetValue<bool?>("Debug:EnableSampleIds")
-    ?? app.Environment.IsDevelopment();
-if (enableSampleIdsEndpoint)
+if (app.Environment.IsDevelopment())
 {
     app.MapGet("/debug/sample-ids", async (WarehouseXDbContext db) =>
     {
@@ -169,6 +184,20 @@ if (enableSampleIdsEndpoint)
             customerId = ord?.CustomerId,
             orderId = ord?.Id
         });
+    });
+
+    app.MapGet("/debug/top-warehouses", async (WarehouseXDbContext db, int take = 5) =>
+    {
+        var normalizedTake = Math.Clamp(take, 1, 50);
+
+        var items = await db.Orders.AsNoTracking()
+            .GroupBy(x => x.WarehouseId)
+            .Select(g => new { WarehouseId = g.Key, Orders = g.Count() })
+            .OrderByDescending(x => x.Orders)
+            .Take(normalizedTake)
+            .ToListAsync();
+
+        return Results.Ok(new { count = items.Count, items });
     });
 }
 

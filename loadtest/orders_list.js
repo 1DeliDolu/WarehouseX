@@ -1,13 +1,18 @@
 import http from "k6/http";
 import { check, fail, sleep } from "k6";
 
+const VUS = toInt(__ENV.VUS, 50, 1);
+const DURATION = String(__ENV.DURATION || "60s");
+const GRACEFUL_STOP = String(__ENV.GRACEFUL_STOP || "30s");
+
 export const options = {
   summaryTrendStats: ["avg", "min", "med", "max", "p(90)", "p(95)", "p(99)"],
   scenarios: {
     orders_list: {
       executor: "constant-vus",
-      vus: 50,
-      duration: "60s",
+      vus: VUS,
+      duration: DURATION,
+      gracefulStop: GRACEFUL_STOP,
     },
   },
   thresholds: {
@@ -25,6 +30,10 @@ const STATUSES = (__ENV.STATUSES || "Created,Picked,Shipped,Cancelled")
 const PAGE_MAX = toInt(__ENV.PAGE_MAX, 50, 1);
 const PAGE_SIZE = toInt(__ENV.PAGE_SIZE, 20, 1);
 const DAYS_BACK = toInt(__ENV.DAYS_BACK, 30, 0);
+const THINK_TIME = toFloat(__ENV.THINK_TIME, 0.1, 0);
+const INCLUDE_TOTAL = ["1", "true", "yes"].includes(
+  String(__ENV.INCLUDE_TOTAL || "false").toLowerCase()
+);
 const USE_CUSTOMER_FILTER = ["1", "true", "yes"].includes(
   String(__ENV.CUSTOMER_FILTER || "false").toLowerCase()
 );
@@ -98,12 +107,19 @@ export default function (data) {
     params.push(`customerId=${encodeURIComponent(data.cid)}`);
   }
 
+  if (INCLUDE_TOTAL) {
+    params.push("includeTotal=true");
+  }
+
   const url = `${BASE}/orders?${params.join("&")}`;
 
   const res = http.get(url);
+  if (res.status === 410) {
+    fail("GET /orders is deprecated (410). Use loadtest/orders_cursor.js instead.");
+  }
   check(res, { "status 200": (r) => r.status === 200 });
 
-  sleep(0.1);
+  sleep(THINK_TIME);
 }
 
 function toInt(value, fallback, min) {
@@ -124,4 +140,12 @@ function loadSeedIds(path) {
   } catch (err) {
     throw new Error(`SEED_IDS_FILE '${path}' could not be read: ${err}`);
   }
+}
+
+function toFloat(value, fallback, min) {
+  const parsed = parseFloat(value || "");
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(min, parsed);
 }

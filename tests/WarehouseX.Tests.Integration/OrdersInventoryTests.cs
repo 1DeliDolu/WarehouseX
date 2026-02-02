@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Json;
 
 namespace WarehouseX.Tests.Integration;
@@ -76,9 +77,13 @@ public sealed class OrdersInventoryTests : IClassFixture<ApiFactory>
         Assert.Equal(8, inventory!.OnHand);
         Assert.Equal(2, inventory.Reserved);
 
-        var list = await _client.GetFromJsonAsync<OrderListResponse>("/orders?page=1&pageSize=20");
-        Assert.NotNull(list);
-        Assert.Contains(list!.Items, item => item.Id == created.Id && item.ItemCount == 1);
+        var cursorList = await _client.GetFromJsonAsync<OrderCursorResponse>(
+            $"/orders/cursor?warehouseId={warehouseId}&pageSize=20&includeItemCount=true");
+        Assert.NotNull(cursorList);
+        Assert.Contains(cursorList!.Items, item => item.Id == created.Id && item.ItemCount == 1);
+
+        var deprecatedList = await _client.GetAsync("/orders?page=1&pageSize=20");
+        Assert.Equal(HttpStatusCode.Gone, deprecatedList.StatusCode);
 
         var detail = await _client.GetFromJsonAsync<OrderDetailResponse>($"/orders/{created.Id}");
         Assert.NotNull(detail);
@@ -99,6 +104,54 @@ public sealed class OrdersInventoryTests : IClassFixture<ApiFactory>
         var cancelledOrder = await _client.GetFromJsonAsync<OrderDetailResponse>($"/orders/{created.Id}");
         Assert.NotNull(cancelledOrder);
         Assert.Equal("Cancelled", cancelledOrder!.Status);
+    }
+
+    [Fact]
+    public async Task CursorList_Paginates()
+    {
+        var warehouseId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var customerId = Guid.NewGuid();
+
+        var seedResponse = await _client.PostAsJsonAsync("/inventory/adjust", new
+        {
+            warehouseId,
+            productId,
+            deltaOnHand = 10
+        });
+
+        seedResponse.EnsureSuccessStatusCode();
+
+        for (var i = 0; i < 2; i++)
+        {
+            var createResponse = await _client.PostAsJsonAsync("/orders", new
+            {
+                customerId,
+                warehouseId,
+                items = new[]
+                {
+                    new { productId, quantity = 1, unitPrice = 10.50m }
+                }
+            });
+
+            createResponse.EnsureSuccessStatusCode();
+        }
+
+        var first = await _client.GetFromJsonAsync<OrderCursorResponse>(
+            $"/orders/cursor?warehouseId={warehouseId}&pageSize=1");
+        Assert.NotNull(first);
+        Assert.Single(first!.Items);
+        Assert.True(first.HasMore);
+        Assert.NotNull(first.Next);
+
+        var cursorCreatedAt = Uri.EscapeDataString(first.Next!.CursorCreatedAt.ToString("O"));
+        var cursorId = first.Next.CursorId;
+
+        var second = await _client.GetFromJsonAsync<OrderCursorResponse>(
+            $"/orders/cursor?warehouseId={warehouseId}&pageSize=1&cursorCreatedAt={cursorCreatedAt}&cursorId={cursorId}");
+        Assert.NotNull(second);
+        Assert.NotEmpty(second!.Items);
+        Assert.DoesNotContain(second.Items, item => item.Id == first.Items[0].Id);
     }
 
     [Fact]
@@ -158,8 +211,6 @@ public sealed class OrdersInventoryTests : IClassFixture<ApiFactory>
 
     private sealed record OrderCreatedResponse(Guid Id, string OrderNumber);
 
-    private sealed record OrderListResponse(int Page, int PageSize, bool HasMore, List<OrderListItem> Items);
-
     private sealed record OrderListItem(
         Guid Id,
         string OrderNumber,
@@ -168,6 +219,14 @@ public sealed class OrdersInventoryTests : IClassFixture<ApiFactory>
         string Status,
         DateTimeOffset CreatedAt,
         int ItemCount);
+
+    private sealed record OrderCursorResponse(
+        int PageSize,
+        bool HasMore,
+        OrderCursorNext? Next,
+        List<OrderListItem> Items);
+
+    private sealed record OrderCursorNext(DateTimeOffset CursorCreatedAt, Guid CursorId);
 
     private sealed record OrderDetailResponse(
         Guid Id,

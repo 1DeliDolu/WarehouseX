@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using Microsoft.EntityFrameworkCore;
 using WarehouseX.Api.Contracts.Orders;
 using WarehouseX.Domain;
@@ -8,12 +10,21 @@ namespace WarehouseX.Api.Endpoints;
 
 public static class OrderEndpoints
 {
+    private static readonly Meter Meter = new("WarehouseX.Api");
+    private static readonly Histogram<double> OrdersCursorDurationMs =
+        Meter.CreateHistogram<double>("orders_cursor_duration_ms");
+
     public static IEndpointRouteBuilder MapOrderEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/orders");
 
         group.MapPost("/", CreateOrder);
-        group.MapGet("/", ListOrders);
+        group.MapGet("/", DeprecatedListOrders);
+        group.MapGet("/cursor", ListOrdersCursor)
+            .WithName("ListOrdersCursor")
+            .WithTags("Orders")
+            .WithSummary("List orders with cursor (keyset) pagination")
+            .WithDescription("Preferred listing endpoint. Supports warehouseId + optional filters + cursorCreatedAt/cursorId.");
         group.MapGet("/{id:guid}", GetOrderById);
         group.MapPost("/{id:guid}/pick", PickOrder);
         group.MapPost("/{id:guid}/cancel", CancelOrder);
@@ -78,6 +89,14 @@ public static class OrderEndpoints
         return Results.Created($"/orders/{order.Id}", new { order.Id, order.OrderNumber });
     }
 
+    private static IResult DeprecatedListOrders()
+    {
+        return Results.Problem(
+            title: "Deprecated endpoint",
+            detail: "Use /orders/cursor for list pagination.",
+            statusCode: StatusCodes.Status410Gone);
+    }
+
     private static async Task<IResult> ListOrders(
         WarehouseXDbContext db,
         Guid? customerId,
@@ -85,6 +104,7 @@ public static class OrderEndpoints
         string? status,
         DateTimeOffset? from,
         DateTimeOffset? to,
+        bool includeTotal = false,
         int page = 1,
         int pageSize = 20)
     {
@@ -115,21 +135,29 @@ public static class OrderEndpoints
             query = query.Where(o => o.CreatedAt <= to.Value);
         }
 
+        int? totalCount = null;
+        if (includeTotal)
+        {
+            totalCount = await query.CountAsync();
+        }
+
         var normalizedPage = page < 1 ? 1 : page;
         var normalizedPageSize = Math.Clamp(pageSize, 1, 200);
 
         var pagePlusOne = await query
             .OrderByDescending(o => o.CreatedAt)
+            .ThenByDescending(o => o.Id)
             .Skip((normalizedPage - 1) * normalizedPageSize)
             .Take(normalizedPageSize + 1)
-            .Select(o => new OrderListItemResponse(
+            .Select(o => new
+            {
                 o.Id,
                 o.OrderNumber,
                 o.CustomerId,
                 o.WarehouseId,
                 o.Status,
-                o.CreatedAt,
-                o.Items.Count))
+                o.CreatedAt
+            })
             .ToListAsync();
 
         var hasMore = pagePlusOne.Count > normalizedPageSize;
@@ -138,13 +166,158 @@ public static class OrderEndpoints
             pagePlusOne.RemoveAt(pagePlusOne.Count - 1);
         }
 
+        var orderIds = pagePlusOne.Select(o => o.Id).ToArray();
+        var itemCounts = orderIds.Length == 0
+            ? new Dictionary<Guid, int>()
+            : await db.OrderItems.AsNoTracking()
+                .Where(i => orderIds.Contains(i.OrderId))
+                .GroupBy(i => i.OrderId)
+                .Select(g => new { OrderId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.OrderId, x => x.Count);
+
+        var items = pagePlusOne.Select(o => new OrderListItemResponse(
+            o.Id,
+            o.OrderNumber,
+            o.CustomerId,
+            o.WarehouseId,
+            o.Status,
+            o.CreatedAt,
+            itemCounts.TryGetValue(o.Id, out var count) ? count : 0)).ToList();
+
+        if (includeTotal)
+        {
+            return Results.Ok(new
+            {
+                page = normalizedPage,
+                pageSize = normalizedPageSize,
+                total = totalCount ?? 0,
+                hasMore,
+                items
+            });
+        }
+
         return Results.Ok(new
         {
             page = normalizedPage,
             pageSize = normalizedPageSize,
             hasMore,
-            items = pagePlusOne
+            items
         });
+    }
+
+    private static async Task<IResult> ListOrdersCursor(
+        WarehouseXDbContext db,
+        Guid warehouseId,
+        string? status,
+        DateTimeOffset? from,
+        DateTimeOffset? to,
+        DateTimeOffset? cursorCreatedAt,
+        Guid? cursorId,
+        bool includeItemCount = false,
+        int pageSize = 20)
+    {
+        var sw = Stopwatch.StartNew();
+        if (warehouseId == Guid.Empty)
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["warehouseId"] = new[] { "WarehouseId is required." }
+            });
+        }
+
+        var normalizedPageSize = Math.Clamp(pageSize, 1, 200);
+        var query = db.Orders.AsNoTracking().Where(x => x.WarehouseId == warehouseId);
+
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            query = query.Where(x => x.Status == status.Trim());
+        }
+
+        if (from.HasValue)
+        {
+            query = query.Where(x => x.CreatedAt >= from.Value);
+        }
+
+        if (to.HasValue)
+        {
+            query = query.Where(x => x.CreatedAt <= to.Value);
+        }
+
+        if (cursorCreatedAt.HasValue)
+        {
+            var cAt = cursorCreatedAt.Value;
+            if (cursorId.HasValue && cursorId.Value != Guid.Empty)
+            {
+                var cId = cursorId.Value;
+                query = query.Where(x =>
+                    x.CreatedAt < cAt ||
+                    (x.CreatedAt == cAt && x.Id.CompareTo(cId) < 0));
+            }
+            else
+            {
+                query = query.Where(x => x.CreatedAt < cAt);
+            }
+        }
+
+        var rows = await query
+            .OrderByDescending(x => x.CreatedAt)
+            .ThenByDescending(x => x.Id)
+            .Take(normalizedPageSize + 1)
+            .Select(x => new
+            {
+                x.Id,
+                x.OrderNumber,
+                x.CustomerId,
+                x.WarehouseId,
+                x.Status,
+                x.CreatedAt
+            })
+            .ToListAsync();
+
+        var hasMore = rows.Count > normalizedPageSize;
+        if (hasMore)
+        {
+            rows.RemoveAt(rows.Count - 1);
+        }
+
+        Dictionary<Guid, int> itemCounts = new();
+        if (includeItemCount && rows.Count > 0)
+        {
+            var orderIds = rows.Select(x => x.Id).ToArray();
+            itemCounts = await db.OrderItems.AsNoTracking()
+                .Where(i => orderIds.Contains(i.OrderId))
+                .GroupBy(i => i.OrderId)
+                .Select(g => new { OrderId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.OrderId, x => x.Count);
+        }
+
+        var items = rows.Select(x => new OrderListItemResponse(
+            x.Id,
+            x.OrderNumber,
+            x.CustomerId,
+            x.WarehouseId,
+            x.Status,
+            x.CreatedAt,
+            includeItemCount && itemCounts.TryGetValue(x.Id, out var count) ? count : 0)).ToList();
+
+        var next = hasMore && rows.Count > 0
+            ? new { cursorCreatedAt = rows[^1].CreatedAt, cursorId = rows[^1].Id }
+            : null;
+
+        var result = Results.Ok(new
+        {
+            pageSize = normalizedPageSize,
+            hasMore,
+            next,
+            items
+        });
+
+        sw.Stop();
+        OrdersCursorDurationMs.Record(
+            sw.Elapsed.TotalMilliseconds,
+            new KeyValuePair<string, object?>("includeItemCount", includeItemCount));
+
+        return result;
     }
 
     private static async Task<IResult> GetOrderById(WarehouseXDbContext db, Guid id)

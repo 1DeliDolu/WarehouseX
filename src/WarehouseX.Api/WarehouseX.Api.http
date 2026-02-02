@@ -16,6 +16,10 @@ Accept: application/json
 GET {{WarehouseX.Api_HostAddress}}/debug/sample-ids
 Accept: application/json
 
+### Top warehouses (debug)
+GET {{WarehouseX.Api_HostAddress}}/debug/top-warehouses?take=5
+Accept: application/json
+
 ### Inventory adjust (seed)
 POST {{WarehouseX.Api_HostAddress}}/inventory/adjust
 Content-Type: application/json
@@ -42,8 +46,12 @@ Content-Type: application/json
   ]
 }
 
-### List orders
+### List orders (deprecated -> 410)
 GET {{WarehouseX.Api_HostAddress}}/orders?page=1&pageSize=20
+Accept: application/json
+
+### List orders (cursor)
+GET {{WarehouseX.Api_HostAddress}}/orders/cursor?warehouseId=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa&pageSize=20
 Accept: application/json
 
 ### Get order by id

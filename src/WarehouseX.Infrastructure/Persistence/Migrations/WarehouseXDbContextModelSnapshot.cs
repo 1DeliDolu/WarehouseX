@@ -91,7 +91,8 @@ namespace WarehouseX.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("WarehouseId");
 
-                    b.HasIndex("WarehouseId", "CreatedAt");
+                    b.HasIndex("WarehouseId", "CreatedAt", "Id", "Status", "OrderNumber", "CustomerId")
+                        .HasDatabaseName("IX_Orders_Warehouse_CreatedAt_Id_Cover");
 
                     b.ToTable("Orders", (string)null);
                 });

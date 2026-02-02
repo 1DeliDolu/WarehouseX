@@ -30,8 +30,8 @@ public class WarehouseXDbContext : DbContext
             b.HasIndex(x => x.Status);
             b.HasIndex(x => x.CustomerId);
             b.HasIndex(x => x.WarehouseId);
-            b.HasIndex(x => new { x.WarehouseId, x.CreatedAt, x.Status, x.OrderNumber, x.CustomerId })
-                .HasDatabaseName("IX_Orders_Warehouse_CreatedAt_Cover");
+            b.HasIndex(x => new { x.WarehouseId, x.CreatedAt, x.Id, x.Status, x.OrderNumber, x.CustomerId })
+                .HasDatabaseName("IX_Orders_Warehouse_CreatedAt_Id_Cover");
 
             b.HasMany(x => x.Items)
                 .WithOne(x => x.Order)
