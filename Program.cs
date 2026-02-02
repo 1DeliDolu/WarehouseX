@@ -7,8 +7,9 @@ using WarehouseX.Services;
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
+var defaultConn = builder.Configuration.GetConnectionString("DefaultConnection");
 builder.Services.AddDbContext<WarehouseXDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseMySql(defaultConn, ServerVersion.AutoDetect(defaultConn)));
 
 builder.Services.AddScoped<IProductRepository, ProductRepository>();
 builder.Services.AddScoped<IImportOrderRepository, ImportOrderRepository>();
